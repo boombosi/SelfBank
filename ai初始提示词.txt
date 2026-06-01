@@ -1,0 +1,129 @@
+你是一个全栈工程师，现在需要帮我从零搭建一个名为“Learning Dashboard”的开源全栈项目，并部署到公网。
+
+## 一、项目总体描述
+这是一个个人学习与资产追踪的仪表盘 Web 应用，用户可以注册/登录自己的账号，记录并追踪四个维度的数据：
+1. 学习时间
+2. 资金账户
+3. 技能账户
+4. 产品/成果账户
+
+所有数据按用户隔离，每个用户只能看到自己的数据。项目需要可以公开访问，并且易于部署和开源。
+
+## 二、技术栈要求
+- **后端**：Python 3.10+，使用 Flask 框架
+- **数据库**：SQLite（开发阶段），可切换 PostgreSQL（生产阶段可选），使用 SQLAlchemy ORM
+- **前端**：原生 HTML + CSS + JavaScript，内嵌在 Flask 模板中（Jinja2），不引入前端框架，保持简单
+- **用户认证**：基于邮箱 + 密码的注册/登录系统，使用 Flask-Login 管理 session
+- **密码安全**：使用 werkzeug 的哈希加密存储密码
+- **部署**：提供完整部署方案，目标平台为 Render（免费，支持 Python Web 服务）或 Railway，需输出部署步骤
+
+## 三、功能模块详细要求
+
+### 1. 用户系统
+- 访问网站时，显示登录页面（如有需要可稍后扩展为注册页，先实现登录/注册一体）
+- 页面顶部显示用户邮箱，提供“退出登录”按钮
+- 未登录用户不能访问任何数据页面
+- 注册需要邮箱、密码（重复确认），邮箱格式前端简单校验，后端唯一性检查
+- 登录成功后进入仪表盘主页
+
+### 2. 仪表盘主页（四个标签页）
+登录后进入主界面，采用顶部导航标签切换四个功能区域：
+- 📊 学习时间
+- 💰 资金账户
+- 🧠 技能账户
+- 🚀 产品账户
+
+**所有增删改操作通过 AJAX 异步完成，不刷新页面，保持交互流畅。**
+
+### 3. 学习时间模块
+- 显示三个统计卡片：今日学习时长、本月学习时长、总学习时长（格式：X小时X分钟）
+- 两个按钮：「开始学习」「结束学习」
+  - 点击「开始学习」：记录当前时间戳，按钮置灰，“结束学习”按钮可用
+  - 点击「结束学习」：计算时长（分钟），存入数据库，同时更新统计卡片，按钮状态重置
+- 历史记录列表：展示最近10条学习记录（日期、开始时间、结束时间、时长），倒序排列
+- 后端需提供相应的 API 接口（开始/结束学习均保存完整记录到数据库，不要只在前端维护状态）
+
+### 4. 资金账户模块
+- 顶部显示汇总：当前总余额、本月收入、本月支出
+- 添加记录表单：日期（默认当天）、类型（收入/支出下拉）、金额、分类（可自定义字符串）、备注
+- 记录列表：按日期倒序显示所有记录，每条可删除
+- 汇总数据由后端计算并返回，或前端根据全量数据计算（要求全量数据由 API 返回，数据量不大）
+
+### 5. 技能账户模块
+- 表单：技能名称、学习时长（小时，可小数）、熟练度（下拉：了解/熟悉/掌握/精通）、相关链接、备注
+- 技能列表：显示所有技能，每个技能展示名称、时长、熟练度、链接（可点击）、备注
+- 支持编辑和删除操作
+- 编辑时可预填现有数据，使用同一个表单区域切换为“更新”模式
+
+### 6. 产品账户模块
+- 表单：产品/项目名称、类型（文章/工具/课程/其他）、完成日期、链接、描述
+- 产品列表：展示所有产品，包含上述信息
+- 支持编辑和删除
+
+### 7. 数据导出/导入/清空（设置菜单）
+- 在页面右上角提供“设置”按钮，下拉菜单包含：
+  - 导出所有数据为 JSON（下载文件）
+  - 导入 JSON 恢复数据（上传文件并解析后批量写入当前用户数据库）
+  - 清空所有数据（需二次确认）
+- 导出内容：当前用户的学习记录、资金记录、技能、产品，全部以 JSON 格式导出
+- 导入时清空当前用户数据再写入，保证覆盖
+
+## 四、数据库设计
+使用 SQLAlchemy 定义以下表，所有表添加 `user_id` 外键关联用户表：
+
+1. **User**
+   - id (Integer, Primary Key)
+   - email (String, unique, not null)
+   - password_hash (String, not null)
+
+2. **StudySession**
+   - id (Integer, PK)
+   - user_id (Integer, FK)
+   - start_time (DateTime, not null)
+   - end_time (DateTime, not null)
+   - duration_minutes (Integer, not null)
+   - created_at (DateTime, default now)
+
+3. **FinanceRecord**
+   - id, user_id, date (Date), type (String: income/expense), amount (Float), category (String), note (Text)
+
+4. **SkillRecord**
+   - id, user_id, name (String), hours (Float), proficiency (String), link (String), note (Text)
+
+5. **ProductRecord**
+   - id, user_id, name (String), type (String), completed_date (Date), link (String), description (Text)
+
+## 五、API 设计
+Flask 路由结构（所有数据 API 加前缀 `/api`，并需登录保护）：
+- `GET/POST /api/study_sessions` – 获取历史或添加新 session（开始-结束需作为一个完整记录提交）
+- `POST /api/study/start` – 返回临时 session id（可前端暂存开始时间，但最终提交时一起发）
+- `POST /api/study/end` – 接收 session id 和结束时间，计算时长存入
+- 资金、技能、产品均遵循 RESTful 风格：`GET/POST /api/finance`, `PUT/DELETE /api/finance/<id>` 等
+- 统计汇总可单独路由，如 `GET /api/study/stats`，返回今日、本月、总计时长
+- 导出：`GET /api/export` 返回当前用户所有数据的 JSON
+- 导入：`POST /api/import` 接收 JSON 并覆写当前用户数据
+- 清空：`POST /api/clear` 删除当前用户所有记录
+
+前端通过 JavaScript 的 `fetch` 调用这些 API，并携带 session cookie（Flask-Login 自动处理）。
+
+## 六、界面与体验
+- 设计风格：简洁现代，暗色主题（深蓝或深灰背景），卡片布局，按钮有微交互
+- 移动端响应式适配（至少保证手机竖屏可用）
+- 统计卡片数字使用较大字体突出
+- 所有操作后给予轻提示（如在页面顶部显示“已保存”2秒自动消失）
+
+## 七、部署要求
+1. 代码结构清晰，包含 `app.py`（Flask 主文件）、`templates/`（HTML 模板）、`static/`（CSS/JS）、`requirements.txt`
+2. 提供详细的 README.md，包含：
+   - 项目介绍
+   - 本地运行方法（克隆、安装依赖、设置环境变量 SECRET_KEY，运行）
+   - 如何部署到 Render 或 Railway 的步骤
+3. 部署后通过公网 URL 可访问，支持多用户注册使用
+
+## 八、交付物
+请按以下顺序逐步输出：
+1. 完整的项目文件结构和代码（app.py, requirements.txt, templates/index.html, static/style.css, static/app.js）
+2. 详细的 README.md 文档
+3. 本地运行与部署到 Render 的具体图文步骤（文字描述即可）
+
+现在，请开始生成项目。
