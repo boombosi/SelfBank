@@ -2,6 +2,9 @@ import os
 import json
 from datetime import datetime, date, timedelta
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import (
     Flask, render_template, request, redirect, url_for,
     flash, jsonify, session, send_file

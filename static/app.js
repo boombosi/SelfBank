@@ -2,489 +2,662 @@
 // Learning Dashboard - Frontend Logic
 // ============================================================
 
-let activeSessionId = null;
-let isRegisterMode = false;
+// ---------- State ----------
+let authMode = 'login';
+let currentStudySessionId = null;
 
-document.addEventListener("DOMContentLoaded", () => {
-    checkAuth();
-    setupAuthForm();
-    setupTabs();
-    setupSettingsDropdown();
-    setupFinanceFormDefaults();
+// ---------- Init ----------
+document.addEventListener('DOMContentLoaded', () => {
+  setupAuthUI();
+  setupTabs();
+  setupSettings();
+  checkAuth();
 });
 
-// ---- Helpers ----
-function showToast(msg, isError) {
-    isError = isError || false;
-    var toast = document.getElementById("toast");
-    toast.textContent = msg;
-    toast.className = "toast show" + (isError ? " error" : "");
-    clearTimeout(toast._timeout);
-    toast._timeout = setTimeout(function() { toast.className = "toast hidden"; }, 2200);
+// ============================================================
+// Auth UI
+// ============================================================
+function setupAuthUI() {
+  const form = document.getElementById('auth-form');
+  const switchLink = document.getElementById('auth-switch-link');
+  const switchText = document.getElementById('auth-switch-text');
+  const subtitle = document.getElementById('auth-subtitle');
+  const submitBtn = document.getElementById('auth-submit-btn');
+  const password2Group = document.getElementById('auth-password2-group');
+  const password2Input = document.getElementById('auth-password2');
+
+  switchLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    authMode = authMode === 'login' ? 'register' : 'login';
+    if (authMode === 'register') {
+      subtitle.textContent = '创建新账户';
+      submitBtn.textContent = '注册';
+      switchText.textContent = '已有账号？';
+      switchLink.textContent = '立即登录';
+      password2Group.classList.remove('hidden');
+      password2Input.required = true;
+    } else {
+      subtitle.textContent = '登录你的账户';
+      submitBtn.textContent = '登录';
+      switchText.textContent = '还没有账号？';
+      switchLink.textContent = '立即注册';
+      password2Group.classList.add('hidden');
+      password2Input.required = false;
+    }
+    hideAuthError();
+  });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    handleAuthSubmit();
+  });
 }
 
-function fmtMinutes(mins) {
-    var h = Math.floor(mins / 60);
-    var m = mins % 60;
-    return h + "\u5c0f\u65f6" + m + "\u5206\u949f";
+function checkAuth() {
+  fetch('/api/auth/me')
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showDashboard(data.email);
+      } else {
+        showAuthOverlay();
+      }
+    })
+    .catch(() => showAuthOverlay());
 }
 
-async function api(url, options) {
-    options = options || {};
-    options.headers = Object.assign({ "Content-Type": "application/json" }, options.headers || {});
-    var res = await fetch(url, options);
-    var data = await res.json();
-    if (!res.ok && data.message) throw new Error(data.message);
-    return data;
+function handleAuthSubmit() {
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const password2 = document.getElementById('auth-password2').value;
+
+  if (!email || !password) {
+    showAuthError('邮箱和密码不能为空');
+    return;
+  }
+
+  if (authMode === 'register') {
+    if (password !== password2) {
+      showAuthError('两次密码输入不一致');
+      return;
+    }
+    if (password.length < 6) {
+      showAuthError('密码长度至少6位');
+      return;
+    }
+  }
+
+  const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+  const body = authMode === 'register'
+    ? { email, password, password2 }
+    : { email, password };
+
+  fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showDashboard(email);
+        showToast(data.message || '成功');
+      } else {
+        showAuthError(data.message || '操作失败');
+      }
+    })
+    .catch(() => showAuthError('网络错误，请重试'));
 }
 
-// ---- Auth ----
-async function checkAuth() {
-    try {
-        var resp = await fetch("/api/auth/me");
-        var data = await resp.json();
-        if (data.ok) { showDashboard(data.email); loadAllData(); }
-        else { showAuth(); }
-    } catch(e) { showAuth(); }
-}
-
-function showAuth() {
-    document.getElementById("auth-overlay").classList.remove("hidden");
-    document.getElementById("dashboard").classList.add("hidden");
+function logout() {
+  fetch('/api/auth/logout', { method: 'POST' })
+    .then(() => {
+      document.getElementById('dashboard').classList.add('hidden');
+      document.getElementById('auth-overlay').classList.remove('hidden');
+      document.getElementById('auth-form').reset();
+      hideAuthError();
+    });
 }
 
 function showDashboard(email) {
-    document.getElementById("auth-overlay").classList.add("hidden");
-    document.getElementById("dashboard").classList.remove("hidden");
-    document.getElementById("user-email").textContent = email;
+  document.getElementById('auth-overlay').classList.add('hidden');
+  document.getElementById('dashboard').classList.remove('hidden');
+  document.getElementById('user-email').textContent = email;
+  loadStudyStats();
+  loadStudySessions();
+  loadFinance();
+  loadFinanceSummary();
+  loadSkills();
+  loadProducts();
+  document.getElementById('fin-date').valueAsDate = new Date();
 }
 
-function setupAuthForm() {
-    var form = document.getElementById("auth-form");
-    var link = document.getElementById("auth-switch-link");
-    var st = document.getElementById("auth-switch-text");
-    var sub = document.getElementById("auth-subtitle");
-    var btn = document.getElementById("auth-submit-btn");
-    var p2g = document.getElementById("auth-password2-group");
-    var err = document.getElementById("auth-error");
-
-    link.addEventListener("click", function(e) {
-        e.preventDefault();
-        isRegisterMode = !isRegisterMode;
-        if (isRegisterMode) {
-            sub.textContent = "\u521b\u5efa\u65b0\u8d26\u6237";
-            btn.textContent = "\u6ce8\u518c";
-            st.textContent = "\u5df2\u6709\u8d26\u53f7\uff1f";
-            link.textContent = "\u7acb\u5373\u767b\u5f55";
-            p2g.classList.remove("hidden");
-        } else {
-            sub.textContent = "\u767b\u5f55\u4f60\u7684\u8d26\u6237";
-            btn.textContent = "\u767b\u5f55";
-            st.textContent = "\u8fd8\u6ca1\u6709\u8d26\u53f7\uff1f";
-            link.textContent = "\u7acb\u5373\u6ce8\u518c";
-            p2g.classList.add("hidden");
-        }
-        err.classList.add("hidden");
-    });
-
-    form.addEventListener("submit", async function(e) {
-        e.preventDefault();
-        var email = document.getElementById("auth-email").value.trim();
-        var pw = document.getElementById("auth-password").value;
-        var pw2 = document.getElementById("auth-password2").value;
-        err.classList.add("hidden");
-        var url = isRegisterMode ? "/api/auth/register" : "/api/auth/login";
-        var body = isRegisterMode ? { email: email, password: pw, password2: pw2 } : { email: email, password: pw };
-        try {
-            var data = await api(url, { method: "POST", body: JSON.stringify(body) });
-            showDashboard(email);
-            loadAllData();
-            form.reset();
-            showToast(data.message);
-        } catch(ex) {
-            err.textContent = ex.message;
-            err.classList.remove("hidden");
-        }
-    });
+function showAuthOverlay() {
+  document.getElementById('auth-overlay').classList.remove('hidden');
+  document.getElementById('dashboard').classList.add('hidden');
 }
 
-async function logout() {
-    await api("/api/auth/logout", { method: "POST" });
-    activeSessionId = null;
-    document.getElementById("btn-start").disabled = false;
-    document.getElementById("btn-end").disabled = true;
-    showAuth();
+function showAuthError(msg) {
+  const el = document.getElementById('auth-error');
+  el.textContent = msg;
+  el.classList.remove('hidden');
 }
 
-// ---- Tabs ----
+function hideAuthError() {
+  document.getElementById('auth-error').classList.add('hidden');
+}
+
+// ============================================================
+// Toast
+// ============================================================
+function showToast(msg, isError = false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.remove('error');
+  if (isError) el.classList.add('error');
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ============================================================
+// Tabs
+// ============================================================
 function setupTabs() {
-    document.querySelectorAll(".tab").forEach(function(tab) {
-        tab.addEventListener("click", function() {
-            document.querySelectorAll(".tab").forEach(function(t) { t.classList.remove("active"); });
-            document.querySelectorAll(".tab-content").forEach(function(c) { c.classList.remove("active"); });
-            tab.classList.add("active");
-            document.getElementById("tab-" + tab.dataset.tab).classList.add("active");
-            var t = tab.dataset.tab;
-            if (t === "study") { loadStudyStats(); loadStudySessions(); }
-            if (t === "finance") { loadFinance(); }
-            if (t === "skills") { loadSkills(); }
-            if (t === "products") { loadProducts(); }
-        });
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.tab;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + target).classList.add('active');
+    });
+  });
+}
+
+// ============================================================
+// Study
+// ============================================================
+function startStudy() {
+  const btnStart = document.getElementById('btn-start');
+  const btnEnd = document.getElementById('btn-end');
+  btnStart.disabled = true;
+  btnEnd.disabled = false;
+
+  fetch('/api/study/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        currentStudySessionId = data.session_id;
+        showToast('学习计时开始');
+      } else {
+        btnStart.disabled = false;
+        btnEnd.disabled = true;
+        showToast(data.message || '开始失败', true);
+      }
+    })
+    .catch(() => {
+      btnStart.disabled = false;
+      btnEnd.disabled = true;
+      showToast('网络错误', true);
     });
 }
 
-// ---- Settings dropdown ----
-function setupSettingsDropdown() {
-    var btn = document.getElementById("settings-btn");
-    var menu = document.getElementById("settings-menu");
-    btn.addEventListener("click", function(e) {
-        e.stopPropagation();
-        menu.classList.toggle("hidden");
-    });
-    document.addEventListener("click", function() { menu.classList.add("hidden"); });
-}
+function endStudy() {
+  if (!currentStudySessionId) return;
+  const btnStart = document.getElementById('btn-start');
+  const btnEnd = document.getElementById('btn-end');
 
-// ---- Export / Import / Clear ----
-async function exportData() {
-    try {
-        var data = await api("/api/export");
-        var blob = new Blob([JSON.stringify(data.data, null, 2)], { type: "application/json" });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement("a");
-        a.href = url;
-        a.download = "learning-dashboard-export-" + new Date().toISOString().slice(0,10) + ".json";
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast("\u6570\u636e\u5df2\u5bfc\u51fa");
-    } catch(ex) { showToast("\u5bfc\u51fa\u5931\u8d25: " + ex.message, true); }
-}
-
-async function importData(event) {
-    var file = event.target.files[0];
-    if (!file) return;
-    try {
-        var text = await file.text();
-        var json = JSON.parse(text);
-        await api("/api/import", { method: "POST", body: JSON.stringify({ data: json }) });
-        showToast("\u6570\u636e\u5bfc\u5165\u6210\u529f");
-        loadAllData();
-    } catch(ex) { showToast("\u5bfc\u5165\u5931\u8d25: " + ex.message, true); }
-    event.target.value = "";
-}
-
-async function clearAllData() {
-    if (!confirm("\u786e\u8ba4\u8981\u6e05\u7a7a\u6240\u6709\u6570\u636e\u5417\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u6062\u590d\uff01")) return;
-    if (!confirm("\u518d\u6b21\u786e\u8ba4\uff1a\u771f\u7684\u8981\u5220\u9664\u6240\u6709\u6570\u636e\u5417\uff1f")) return;
-    try {
-        await api("/api/clear", { method: "POST" });
-        showToast("\u6240\u6709\u6570\u636e\u5df2\u6e05\u7a7a");
-        loadAllData();
-    } catch(ex) { showToast("\u6e05\u7a7a\u5931\u8d25: " + ex.message, true); }
-}
-
-function loadAllData() {
-    loadStudyStats(); loadStudySessions(); loadFinance(); loadSkills(); loadProducts();
-}
-
-// ---- Study ----
-async function loadStudyStats() {
-    try {
-        var data = await api("/api/study/stats");
-        document.getElementById("stat-today").textContent = fmtMinutes(data.today_minutes);
-        document.getElementById("stat-month").textContent = fmtMinutes(data.month_minutes);
-        document.getElementById("stat-total").textContent = fmtMinutes(data.total_minutes);
-    } catch(ex) { console.error(ex); }
-}
-
-async function loadStudySessions() {
-    try {
-        var data = await api("/api/study/sessions");
-        var c = document.getElementById("study-list");
-        if (data.sessions.length === 0) {
-            c.innerHTML = "<div class=\"list-empty\">\u6682\u65e0\u5b66\u4e60\u8bb0\u5f55\uff0c\u70b9\u51fb\u300c\u5f00\u59cb\u5b66\u4e60\u300d\u5427</div>";
-            return;
-        }
-        c.innerHTML = data.sessions.map(function(s) {
-            var start = new Date(s.start_time);
-            var end = new Date(s.end_time);
-            var ds = start.toLocaleDateString("zh-CN");
-            var ss = start.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-            var es = end.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-            return "<div class=\"list-item\"><div class=\"item-body\"><div class=\"item-title\">" + ds + "</div><div class=\"item-meta\">" + ss + " \u2192 " + es + " \u00b7 " + fmtMinutes(s.duration_minutes) + "</div></div></div>";
-        }).join("");
-    } catch(ex) { console.error(ex); }
-}
-
-async function startStudy() {
-    try {
-        var data = await api("/api/study/start", { method: "POST" });
-        activeSessionId = data.session_id;
-        document.getElementById("btn-start").disabled = true;
-        document.getElementById("btn-end").disabled = false;
-        showToast("\u5b66\u4e60\u8ba1\u65f6\u5f00\u59cb...");
-    } catch(ex) { showToast("\u5f00\u59cb\u5931\u8d25: " + ex.message, true); }
-}
-
-async function endStudy() {
-    if (!activeSessionId) return;
-    try {
-        var data = await api("/api/study/end", {
-            method: "POST",
-            body: JSON.stringify({ session_id: activeSessionId, end_time: new Date().toISOString() })
-        });
-        showToast("\u5df2\u8bb0\u5f55\u5b66\u4e60 " + fmtMinutes(data.duration_minutes));
-        activeSessionId = null;
-        document.getElementById("btn-start").disabled = false;
-        document.getElementById("btn-end").disabled = true;
+  fetch('/api/study/end', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: currentStudySessionId })
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        currentStudySessionId = null;
+        btnStart.disabled = false;
+        btnEnd.disabled = true;
+        showToast('学习计时结束');
         loadStudyStats();
         loadStudySessions();
-    } catch(ex) { showToast("\u7ed3\u675f\u5931\u8d25: " + ex.message, true); }
+      } else {
+        showToast(data.message || '结束失败', true);
+      }
+    })
+    .catch(() => showToast('网络错误', true));
 }
 
-// ---- Finance ----
-function setupFinanceFormDefaults() {
-    var di = document.getElementById("fin-date");
-    if (di) di.value = new Date().toISOString().slice(0, 10);
+function loadStudyStats() {
+  fetch('/api/study/stats')
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        document.getElementById('stat-today').textContent = formatMinutes(data.today_minutes);
+        document.getElementById('stat-month').textContent = formatMinutes(data.month_minutes);
+        document.getElementById('stat-total').textContent = formatMinutes(data.total_minutes);
+      }
+    });
 }
 
-async function loadFinance() {
-    try {
-        var rd = await api("/api/finance");
-        var sd = await api("/api/finance/summary");
-        document.getElementById("fin-balance").textContent = "\u00a5" + sd.total_balance.toFixed(2);
-        document.getElementById("fin-income").textContent = "\u00a5" + sd.month_income.toFixed(2);
-        document.getElementById("fin-expense").textContent = "\u00a5" + sd.month_expense.toFixed(2);
-        var c = document.getElementById("finance-list");
-        if (rd.records.length === 0) {
-            c.innerHTML = "<div class=\"list-empty\">\u6682\u65e0\u8d44\u91d1\u8bb0\u5f55</div>";
-            return;
-        }
-        c.innerHTML = rd.records.map(function(r) {
-            var cls = r.type === "income" ? "income" : "expense";
-            var pfx = r.type === "income" ? "+" : "-";
-            return "<div class=\"list-item\"><div class=\"item-body\"><div class=\"item-title\">" + escHtml(r.category || "\u672a\u5206\u7c7b") + "</div><div class=\"item-meta\">" + r.date + " \u00b7 " + escHtml(r.note) + " \u00b7 " + (r.type === "income" ? "\u6536\u5165" : "\u652f\u51fa") + "</div></div><div class=\"item-amount " + cls + "\">" + pfx + "\u00a5" + r.amount.toFixed(2) + "</div><div class=\"item-actions\"><button class=\"danger\" onclick=\"deleteFinance(" + r.id + ")\">\u5220\u9664</button></div></div>";
-        }).join("");
-    } catch(ex) { console.error(ex); }
+function loadStudySessions() {
+  fetch('/api/study/sessions')
+    .then(r => r.json())
+    .then(data => {
+      const container = document.getElementById('study-list');
+      if (!data.ok || !data.sessions.length) {
+        container.innerHTML = '<div class="list-empty">暂无学习记录</div>';
+        return;
+      }
+      container.innerHTML = data.sessions.map(s => {
+        const start = new Date(s.start_time + 'Z').toLocaleString('zh-CN');
+        return '<div class="list-item">' +
+          '<div class="item-body">' +
+          '<div class="item-title">' + formatMinutes(s.duration_minutes) + '</div>' +
+          '<div class="item-meta">' + start + '</div>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+    });
 }
 
-async function addFinance(event) {
-    event.preventDefault();
-    var data = {
-        date: document.getElementById("fin-date").value,
-        type: document.getElementById("fin-type").value,
-        amount: parseFloat(document.getElementById("fin-amount").value),
-        category: document.getElementById("fin-category").value.trim(),
-        note: document.getElementById("fin-note").value.trim()
-    };
-    if (!data.date || isNaN(data.amount) || data.amount <= 0) {
-        showToast("\u8bf7\u586b\u5199\u6709\u6548\u65e5\u671f\u548c\u91d1\u989d", true);
-        return false;
-    }
-    try {
-        await api("/api/finance", { method: "POST", body: JSON.stringify(data) });
-        showToast("\u5df2\u6dfb\u52a0");
-        event.target.reset();
-        setupFinanceFormDefaults();
-        loadFinance();
-    } catch(ex) { showToast(ex.message, true); }
+function formatMinutes(totalMinutes) {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return h + '小时' + m + '分钟';
+}
+
+// ============================================================
+// Finance
+// ============================================================
+function loadFinance() {
+  fetch('/api/finance')
+    .then(r => r.json())
+    .then(data => {
+      const container = document.getElementById('finance-list');
+      if (!data.ok || !data.records.length) {
+        container.innerHTML = '<div class="list-empty">暂无资金记录</div>';
+        return;
+      }
+      container.innerHTML = data.records.map(r => {
+        const cls = r.type === 'income' ? 'income' : 'expense';
+        const prefix = r.type === 'income' ? '+' : '-';
+        const date = new Date(r.date + 'T00:00:00').toLocaleDateString('zh-CN');
+        return '<div class="list-item">' +
+          '<div class="item-body">' +
+          '<div class="item-title">' + escHtml(r.category || '未分类') + '</div>' +
+          '<div class="item-meta">' + date + ' ' + escHtml(r.note || '') + '</div>' +
+          '</div>' +
+          '<div class="item-amount ' + cls + '">' + prefix + '¥' + r.amount.toFixed(2) + '</div>' +
+          '<div class="item-actions">' +
+          '<button class="danger" onclick="deleteFinance(' + r.id + ')">删除</button>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+    });
+}
+
+function loadFinanceSummary() {
+  fetch('/api/finance/summary')
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        document.getElementById('fin-balance').textContent = '¥' + data.total_balance.toFixed(2);
+        document.getElementById('fin-income').textContent = '¥' + data.month_income.toFixed(2);
+        document.getElementById('fin-expense').textContent = '¥' + data.month_expense.toFixed(2);
+      }
+    });
+}
+
+function addFinance(e) {
+  e.preventDefault();
+  const date = document.getElementById('fin-date').value;
+  const type = document.getElementById('fin-type').value;
+  const amount = parseFloat(document.getElementById('fin-amount').value);
+  const category = document.getElementById('fin-category').value.trim();
+  const note = document.getElementById('fin-note').value.trim();
+
+  if (!date || !amount || amount <= 0) {
+    showToast('请填写日期和有效金额', true);
     return false;
-}
+  }
 
-async function deleteFinance(id) {
-    if (!confirm("\u786e\u8ba4\u5220\u9664\u6b64\u8bb0\u5f55\uff1f")) return;
-    try {
-        await api("/api/finance/" + id, { method: "DELETE" });
-        showToast("\u5df2\u5220\u9664");
+  fetch('/api/finance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, type, amount, category, note })
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast('已添加');
+        document.getElementById('fin-amount').value = '';
+        document.getElementById('fin-category').value = '';
+        document.getElementById('fin-note').value = '';
         loadFinance();
-    } catch(ex) { showToast(ex.message, true); }
+        loadFinanceSummary();
+      } else {
+        showToast(data.message || '添加失败', true);
+      }
+    });
+  return false;
 }
 
-// ---- Skills ----
-async function loadSkills() {
-    try {
-        var data = await api("/api/skills");
-        var c = document.getElementById("skill-list");
-        if (data.skills.length === 0) {
-            c.innerHTML = "<div class=\"list-empty\">\u6682\u65e0\u6280\u80fd\u8bb0\u5f55</div>";
-            return;
-        }
-        var pm = { "\u4e86\u89e3": "badge-beginner", "\u719f\u6089": "badge-familiar", "\u638c\u63e1": "badge-mastery", "\u7cbe\u901a": "badge-expert" };
-        c.innerHTML = data.skills.map(function(s) {
-            var lh = s.link ? "<a href=\"" + escAttr(s.link) + "\" target=\"_blank\" rel=\"noopener\">\ud83d\udd17 \u94fe\u63a5</a>" : "";
-            return "<div class=\"list-item\"><div class=\"item-body\"><div class=\"item-title\">" + escHtml(s.name) + " <span class=\"badge " + (pm[s.proficiency] || "badge-beginner") + "\">" + escHtml(s.proficiency) + "</span></div><div class=\"item-meta\">" + s.hours + " \u5c0f\u65f6 \u00b7 " + escHtml(s.note) + " " + lh + "</div></div><div class=\"item-actions\"><button onclick=\"editSkill(" + s.id + ")\">\u7f16\u8f91</button><button class=\"danger\" onclick=\"deleteSkill(" + s.id + ")\">\u5220\u9664</button></div></div>";
-        }).join("");
-    } catch(ex) { console.error(ex); }
+function deleteFinance(id) {
+  if (!confirm('确认删除？')) return;
+  fetch('/api/finance/' + id, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast('已删除');
+        loadFinance();
+        loadFinanceSummary();
+      } else {
+        showToast('删除失败', true);
+      }
+    });
 }
 
-// Store skill data for edit lookup
-var _skillCache = {};
-var _productCache = {};
-
-async function loadSkillsWithCache() {
-    try {
-        var data = await api("/api/skills");
-        _skillCache = {};
-        data.skills.forEach(function(s) { _skillCache[s.id] = s; });
-        var c = document.getElementById("skill-list");
-        if (data.skills.length === 0) {
-            c.innerHTML = "<div class=\"list-empty\">\u6682\u65e0\u6280\u80fd\u8bb0\u5f55</div>";
-            return;
-        }
-        var pm = { "\u4e86\u89e3": "badge-beginner", "\u719f\u6089": "badge-familiar", "\u638c\u63e1": "badge-mastery", "\u7cbe\u901a": "badge-expert" };
-        c.innerHTML = data.skills.map(function(s) {
-            var lh = s.link ? "<a href=\"" + escAttr(s.link) + "\" target=\"_blank\" rel=\"noopener\">\ud83d\udd17 \u94fe\u63a5</a>" : "";
-            return "<div class=\"list-item\"><div class=\"item-body\"><div class=\"item-title\">" + escHtml(s.name) + " <span class=\"badge " + (pm[s.proficiency] || "badge-beginner") + "\">" + escHtml(s.proficiency) + "</span></div><div class=\"item-meta\">" + s.hours + " \u5c0f\u65f6 \u00b7 " + escHtml(s.note) + " " + lh + "</div></div><div class=\"item-actions\"><button onclick=\"editSkill(" + s.id + ")\">\u7f16\u8f91</button><button class=\"danger\" onclick=\"deleteSkill(" + s.id + ")\">\u5220\u9664</button></div></div>";
-        }).join("");
-    } catch(ex) { console.error(ex); }
+// ============================================================
+// Skills
+// ============================================================
+function loadSkills() {
+  fetch('/api/skills')
+    .then(r => r.json())
+    .then(data => {
+      const container = document.getElementById('skill-list');
+      if (!data.ok || !data.skills.length) {
+        container.innerHTML = '<div class="list-empty">暂无技能记录</div>';
+        return;
+      }
+      container.innerHTML = data.skills.map(s => {
+        const badgeMap = { '了解': 'beginner', '熟悉': 'familiar', '掌握': 'mastery', '精通': 'expert' };
+        const badgeCls = badgeMap[s.proficiency] || 'beginner';
+        return '<div class="list-item">' +
+          '<div class="item-body">' +
+          '<div class="item-title">' + escHtml(s.name) + ' <span class="badge badge-' + badgeCls + '">' + escHtml(s.proficiency) + '</span></div>' +
+          '<div class="item-meta">' + s.hours + ' 小时 ' + (s.link ? '<a href="' + escHtml(s.link) + '" target="_blank">链接</a> ' : '') + escHtml(s.note) + '</div>' +
+          '</div>' +
+          '<div class="item-actions">' +
+          '<button onclick="editSkill(' + s.id + ', \'' + escAttr(s.name) + '\', ' + s.hours + ', \'' + escAttr(s.proficiency) + '\', \'' + escAttr(s.link) + '\', \'' + escAttr(s.note) + '\')">编辑</button>' +
+          '<button class="danger" onclick="deleteSkill(' + s.id + ')">删除</button>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+    });
 }
 
-async function saveSkill(event) {
-    event.preventDefault();
-    var editId = document.getElementById("skill-edit-id").value;
-    var data = {
-        name: document.getElementById("skill-name").value.trim(),
-        hours: parseFloat(document.getElementById("skill-hours").value),
-        proficiency: document.getElementById("skill-proficiency").value,
-        link: document.getElementById("skill-link").value.trim(),
-        note: document.getElementById("skill-note").value.trim()
-    };
-    if (!data.name || isNaN(data.hours) || data.hours <= 0) {
-        showToast("\u8bf7\u586b\u5199\u6280\u80fd\u540d\u79f0\u548c\u6709\u6548\u65f6\u957f", true);
-        return false;
-    }
-    try {
-        if (editId) {
-            await api("/api/skills/" + editId, { method: "PUT", body: JSON.stringify(data) });
-            showToast("\u5df2\u66f4\u65b0");
-        } else {
-            await api("/api/skills", { method: "POST", body: JSON.stringify(data) });
-            showToast("\u5df2\u6dfb\u52a0");
-        }
+function saveSkill(e) {
+  e.preventDefault();
+  const editId = document.getElementById('skill-edit-id').value;
+  const name = document.getElementById('skill-name').value.trim();
+  const hours = parseFloat(document.getElementById('skill-hours').value);
+  const proficiency = document.getElementById('skill-proficiency').value;
+  const link = document.getElementById('skill-link').value.trim();
+  const note = document.getElementById('skill-note').value.trim();
+
+  if (!name || !hours || hours <= 0) {
+    showToast('请填写技能名称和有效时长', true);
+    return false;
+  }
+
+  const isEdit = !!editId;
+  const url = isEdit ? '/api/skills/' + editId : '/api/skills';
+  const method = isEdit ? 'PUT' : 'POST';
+
+  fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, hours, proficiency, link, note })
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast(isEdit ? '已更新' : '已添加');
         cancelSkillEdit();
-        loadSkillsWithCache();
-    } catch(ex) { showToast(ex.message, true); }
-    return false;
+        loadSkills();
+      } else {
+        showToast(data.message || '保存失败', true);
+      }
+    });
+  return false;
 }
 
-function editSkill(id) {
-    var s = _skillCache[id];
-    if (!s) return;
-    document.getElementById("skill-edit-id").value = s.id;
-    document.getElementById("skill-name").value = s.name;
-    document.getElementById("skill-hours").value = s.hours;
-    document.getElementById("skill-proficiency").value = s.proficiency;
-    document.getElementById("skill-link").value = s.link;
-    document.getElementById("skill-note").value = s.note;
-    document.getElementById("skill-submit-btn").textContent = "\u66f4\u65b0";
-    document.getElementById("skill-form-title").textContent = "\u270f\ufe0f \u7f16\u8f91\u6280\u80fd";
-    document.getElementById("skill-cancel-btn").classList.remove("hidden");
+function editSkill(id, name, hours, proficiency, link, note) {
+  document.getElementById('skill-edit-id').value = id;
+  document.getElementById('skill-name').value = name;
+  document.getElementById('skill-hours').value = hours;
+  document.getElementById('skill-proficiency').value = proficiency;
+  document.getElementById('skill-link').value = link;
+  document.getElementById('skill-note').value = note;
+  document.getElementById('skill-submit-btn').textContent = '更新';
+  document.getElementById('skill-form-title').textContent = '编辑技能';
+  document.getElementById('skill-cancel-btn').classList.remove('hidden');
 }
 
 function cancelSkillEdit() {
-    document.getElementById("skill-edit-id").value = "";
-    document.getElementById("skill-form").reset();
-    document.getElementById("skill-submit-btn").textContent = "\u6dfb\u52a0";
-    document.getElementById("skill-form-title").textContent = "\u2795 \u6dfb\u52a0\u6280\u80fd";
-    document.getElementById("skill-cancel-btn").classList.add("hidden");
+  document.getElementById('skill-edit-id').value = '';
+  document.getElementById('skill-form').reset();
+  document.getElementById('skill-submit-btn').textContent = '添加';
+  document.getElementById('skill-form-title').textContent = '添加技能';
+  document.getElementById('skill-cancel-btn').classList.add('hidden');
 }
 
-async function deleteSkill(id) {
-    if (!confirm("\u786e\u8ba4\u5220\u9664\u6b64\u6280\u80fd\uff1f")) return;
-    try {
-        await api("/api/skills/" + id, { method: "DELETE" });
-        showToast("\u5df2\u5220\u9664");
-        loadSkillsWithCache();
-    } catch(ex) { showToast(ex.message, true); }
+function deleteSkill(id) {
+  if (!confirm('确认删除？')) return;
+  fetch('/api/skills/' + id, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast('已删除');
+        loadSkills();
+      } else {
+        showToast('删除失败', true);
+      }
+    });
 }
 
-// ---- Products ----
-async function loadProductsWithCache() {
-    try {
-        var data = await api("/api/products");
-        _productCache = {};
-        data.products.forEach(function(p) { _productCache[p.id] = p; });
-        var c = document.getElementById("product-list");
-        if (data.products.length === 0) {
-            c.innerHTML = "<div class=\"list-empty\">\u6682\u65e0\u4ea7\u54c1\u8bb0\u5f55</div>";
-            return;
-        }
-        c.innerHTML = data.products.map(function(p) {
-            var lh = p.link ? "<a href=\"" + escAttr(p.link) + "\" target=\"_blank\" rel=\"noopener\">\ud83d\udd17 \u94fe\u63a5</a>" : "";
-            return "<div class=\"list-item\"><div class=\"item-body\"><div class=\"item-title\">" + escHtml(p.name) + " <span class=\"badge badge-familiar\">" + escHtml(p.type) + "</span></div><div class=\"item-meta\">" + (p.completed_date || "\u672a\u8bbe\u7f6e\u65e5\u671f") + " \u00b7 " + escHtml(p.description) + " " + lh + "</div></div><div class=\"item-actions\"><button onclick=\"editProduct(" + p.id + ")\">\u7f16\u8f91</button><button class=\"danger\" onclick=\"deleteProduct(" + p.id + ")\">\u5220\u9664</button></div></div>";
-        }).join("");
-    } catch(ex) { console.error(ex); }
+// ============================================================
+// Products
+// ============================================================
+function loadProducts() {
+  fetch('/api/products')
+    .then(r => r.json())
+    .then(data => {
+      const container = document.getElementById('product-list');
+      if (!data.ok || !data.products.length) {
+        container.innerHTML = '<div class="list-empty">暂无产品记录</div>';
+        return;
+      }
+      container.innerHTML = data.products.map(p => {
+        const date = p.completed_date ? new Date(p.completed_date + 'T00:00:00').toLocaleDateString('zh-CN') : '';
+        return '<div class="list-item">' +
+          '<div class="item-body">' +
+          '<div class="item-title">' + escHtml(p.name) + ' <span style="color:var(--text-muted);font-size:12px">[' + escHtml(p.type) + ']</span></div>' +
+          '<div class="item-meta">' + date + ' ' + (p.link ? '<a href="' + escHtml(p.link) + '" target="_blank">链接</a> ' : '') + escHtml(p.description) + '</div>' +
+          '</div>' +
+          '<div class="item-actions">' +
+          '<button onclick="editProduct(' + p.id + ', \'' + escAttr(p.name) + '\', \'' + escAttr(p.type) + '\', \'' + escAttr(p.completed_date) + '\', \'' + escAttr(p.link) + '\', \'' + escAttr(p.description) + '\')">编辑</button>' +
+          '<button class="danger" onclick="deleteProduct(' + p.id + ')">删除</button>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+    });
 }
 
-async function saveProduct(event) {
-    event.preventDefault();
-    var editId = document.getElementById("product-edit-id").value;
-    var data = {
-        name: document.getElementById("product-name").value.trim(),
-        type: document.getElementById("product-type").value,
-        completed_date: document.getElementById("product-date").value,
-        link: document.getElementById("product-link").value.trim(),
-        description: document.getElementById("product-desc").value.trim()
-    };
-    if (!data.name) {
-        showToast("\u8bf7\u586b\u5199\u4ea7\u54c1\u540d\u79f0", true);
-        return false;
-    }
-    try {
-        if (editId) {
-            await api("/api/products/" + editId, { method: "PUT", body: JSON.stringify(data) });
-            showToast("\u5df2\u66f4\u65b0");
-        } else {
-            await api("/api/products", { method: "POST", body: JSON.stringify(data) });
-            showToast("\u5df2\u6dfb\u52a0");
-        }
-        cancelProductEdit();
-        loadProductsWithCache();
-    } catch(ex) { showToast(ex.message, true); }
+function saveProduct(e) {
+  e.preventDefault();
+  const editId = document.getElementById('product-edit-id').value;
+  const name = document.getElementById('product-name').value.trim();
+  const type = document.getElementById('product-type').value;
+  const completed_date = document.getElementById('product-date').value;
+  const link = document.getElementById('product-link').value.trim();
+  const description = document.getElementById('product-desc').value.trim();
+
+  if (!name) {
+    showToast('请填写项目名称', true);
     return false;
+  }
+
+  const isEdit = !!editId;
+  const url = isEdit ? '/api/products/' + editId : '/api/products';
+  const method = isEdit ? 'PUT' : 'POST';
+
+  fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, type, completed_date, link, description })
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast(isEdit ? '已更新' : '已添加');
+        cancelProductEdit();
+        loadProducts();
+      } else {
+        showToast(data.message || '保存失败', true);
+      }
+    });
+  return false;
 }
 
-function editProduct(id) {
-    var p = _productCache[id];
-    if (!p) return;
-    document.getElementById("product-edit-id").value = p.id;
-    document.getElementById("product-name").value = p.name;
-    document.getElementById("product-type").value = p.type;
-    document.getElementById("product-date").value = p.completed_date || "";
-    document.getElementById("product-link").value = p.link;
-    document.getElementById("product-desc").value = p.description;
-    document.getElementById("product-submit-btn").textContent = "\u66f4\u65b0";
-    document.getElementById("product-form-title").textContent = "\u270f\ufe0f \u7f16\u8f91\u4ea7\u54c1";
-    document.getElementById("product-cancel-btn").classList.remove("hidden");
+function editProduct(id, name, type, completed_date, link, description) {
+  document.getElementById('product-edit-id').value = id;
+  document.getElementById('product-name').value = name;
+  document.getElementById('product-type').value = type;
+  document.getElementById('product-date').value = completed_date;
+  document.getElementById('product-link').value = link;
+  document.getElementById('product-desc').value = description;
+  document.getElementById('product-submit-btn').textContent = '更新';
+  document.getElementById('product-form-title').textContent = '编辑产品';
+  document.getElementById('product-cancel-btn').classList.remove('hidden');
 }
 
 function cancelProductEdit() {
-    document.getElementById("product-edit-id").value = "";
-    document.getElementById("product-form").reset();
-    document.getElementById("product-submit-btn").textContent = "\u6dfb\u52a0";
-    document.getElementById("product-form-title").textContent = "\u2795 \u6dfb\u52a0\u4ea7\u54c1";
-    document.getElementById("product-cancel-btn").classList.add("hidden");
+  document.getElementById('product-edit-id').value = '';
+  document.getElementById('product-form').reset();
+  document.getElementById('product-submit-btn').textContent = '添加';
+  document.getElementById('product-form-title').textContent = '添加产品';
+  document.getElementById('product-cancel-btn').classList.add('hidden');
 }
 
-async function deleteProduct(id) {
-    if (!confirm("\u786e\u8ba4\u5220\u9664\u6b64\u4ea7\u54c1\uff1f")) return;
+function deleteProduct(id) {
+  if (!confirm('确认删除？')) return;
+  fetch('/api/products/' + id, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast('已删除');
+        loadProducts();
+      } else {
+        showToast('删除失败', true);
+      }
+    });
+}
+
+// ============================================================
+// Settings (Export / Import / Clear)
+// ============================================================
+function setupSettings() {
+  const btn = document.getElementById('settings-btn');
+  const menu = document.getElementById('settings-menu');
+  btn.addEventListener('click', () => menu.classList.toggle('hidden'));
+  document.addEventListener('click', (e) => {
+    if (!btn.contains(e.target) && !menu.contains(e.target)) {
+      menu.classList.add('hidden');
+    }
+  });
+}
+
+function exportData() {
+  document.getElementById('settings-menu').classList.add('hidden');
+  fetch('/api/export')
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        const blob = new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'dashboard-export-' + new Date().toISOString().slice(0, 10) + '.json';
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('数据已导出');
+      }
+    });
+}
+
+function importData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
     try {
-        await api("/api/products/" + id, { method: "DELETE" });
-        showToast("\u5df2\u5220\u9664");
-        loadProductsWithCache();
-    } catch(ex) { showToast(ex.message, true); }
+      const data = JSON.parse(e.target.result);
+      fetch('/api/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data })
+      })
+        .then(r => r.json())
+        .then(res => {
+          if (res.ok) {
+            showToast('数据已导入');
+            loadAll();
+          } else {
+            showToast(res.message || '导入失败', true);
+          }
+        });
+    } catch (err) {
+      showToast('无效的 JSON 文件', true);
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
 }
 
-// Wrappers that use cached versions
-function loadSkills() { loadSkillsWithCache(); }
-function loadProducts() { loadProductsWithCache(); }
-
-// ---- Escape helpers ----
-function escHtml(s) {
-    if (!s) return "";
-    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+function clearAllData() {
+  document.getElementById('settings-menu').classList.add('hidden');
+  if (!confirm('确定要清空所有数据吗？此操作不可恢复！')) return;
+  fetch('/api/clear', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast('数据已清空');
+        loadAll();
+      } else {
+        showToast('清空失败', true);
+      }
+    });
 }
 
-function escAttr(s) {
-    if (!s) return "";
-    return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+function loadAll() {
+  loadStudyStats();
+  loadStudySessions();
+  loadFinance();
+  loadFinanceSummary();
+  loadSkills();
+  loadProducts();
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function escAttr(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
