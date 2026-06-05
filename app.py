@@ -3,7 +3,7 @@ import json
 from datetime import datetime, date, timedelta
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -352,4 +352,6 @@ def api_clear():
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # 本地开发用 debug 模式，生产环境通过 Render 环境变量控制
+    is_debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(debug=is_debug, host="0.0.0.0", port=5000)
