@@ -349,9 +349,11 @@ def api_clear():
     db.session.commit()
     return jsonify({"ok": True, "message": "\u6240\u6709\u6570\u636e\u5df2\u6e05\u7a7a"})
 
+# 在 Gunicorn 生产环境下，__main__ 不会执行，所以在这里创建表
+with app.app_context():
+    db.create_all()
+
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
     # 本地开发用 debug 模式，生产环境通过 Render 环境变量控制
     is_debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     app.run(debug=is_debug, host="0.0.0.0", port=5000)
